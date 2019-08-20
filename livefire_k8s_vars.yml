@@ -1,0 +1,85 @@
+#
+#
+# Variables file for K8s Configuring NSX-T Resources
+# Creates the following:
+#   - 2 IP Blocks
+#   - 2 IP Pools 
+#   - Configure BGP route redistribution for K8s
+#
+{
+
+  #
+  # Flag to create or delete all the objects
+  # Accepts: 'present' to create; 'absent' to delete
+  #
+  "state": "present",
+
+  #
+  # Common NSX Appliance variables
+  #
+  "nsx_username": "admin",
+  "nsx_password": "VMware1!VMware1!",
+  "validate_certs": False,
+
+  #
+  # First NSX appliance node. Defined separate based on the consumption.
+  # Accepts both IP (IPv4) and FQDN for 'mgmt_ip'
+  #
+  "nsx_node1": {
+    "hostname": "nsxmgr-01a.corp.local",
+    "mgmt_ip": "192.168.110.15",
+    "datacenter": "Site-A",
+    "cluster": "Cluster-01a",
+    "datastore": "esx-02a-local",
+    "portgroup": "SiteA-vDS-01-Management"
+  },
+
+  "ip_blocks": [
+    {
+      "display_name": "tenant1-container-ip-block",
+      "cidr": "10.4.0.0/16"
+    }
+    ,
+    {
+      "display_name": "tenant1-no-snat-ip-block",
+      "cidr": "172.30.0.0/16"
+    }
+  ],
+
+  "ip_pools": [
+    {
+      "display_name": "tenant1-container-ext-ip-pool",
+      "subnets": [
+        {
+          "allocation_ranges": [
+            {
+              "start": "172.31.0.1",
+              "end": "172.31.0.254"
+            }
+          ],
+          "cidr": "172.31.0.0/24"
+        }
+      ]
+    }
+    ,
+    {
+      "display_name": "tenant1-container-lb-ip-pool",
+      "subnets": [
+        {
+          "allocation_ranges": [
+            {
+              "start": "172.31.1.1",
+              "end": "172.31.1.254"
+            }
+          ],
+          "cidr": "172.31.1.0/24"
+        }
+      ]
+    }
+  ],
+
+  "logical_switches": {
+    "display_name": "tenant1-k8s-node-vif",
+    "transport_zone_name": "OVERLAY-TZ",
+  },  
+}

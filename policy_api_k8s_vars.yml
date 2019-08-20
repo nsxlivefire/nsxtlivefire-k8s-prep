@@ -1,0 +1,32 @@
+{  
+  "sitea_gateways":{  
+    "resource_type":"Infra",
+    "children":[  
+      {  
+        "resource_type":"ChildTier0",
+        "Tier0":{  
+          "id":"t0-sitea",
+          "resource_type":"Tier0",
+          "ha_mode":"ACTIVE_STANDBY",
+          "failover_mode":"NON_PREEMPTIVE",
+          "children":[  
+            {  
+              "resource_type":"ChildLocaleServices",
+              "LocaleServices":{  
+                "resource_type":"LocaleServices",
+                "id":"default",
+                "route_redistribution_types":[  
+                  "TIER1_CONNECTED",
+                  "TIER1_LB_VIP",
+                  "TIER0_NAT",
+
+                ],
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+}
+

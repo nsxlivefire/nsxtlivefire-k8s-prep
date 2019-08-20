@@ -1,0 +1,226 @@
+#
+- hosts: 127.0.0.1
+  connection: local
+  become: yes
+  vars_files:
+    - livefire_k8s_vars.yml
+    - policy_api_k8s_vars.yml
+  tasks:
+
+    - name: Create IP Blocks for Kubernetes Pods
+      nsxt_ip_blocks:
+        hostname: "{{ nsx_node1.mgmt_ip }}"
+        username: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        validate_certs: "{{ validate_certs }}"
+        display_name: "{{ item.display_name }}"
+        cidr: "{{ item.cidr }}"
+        state: "{{ state }}"
+      with_items:
+        - "{{ ip_blocks }}"
+
+    - name: Create IP Pools
+      nsxt_ip_pools:
+        hostname: "{{ nsx_node1.mgmt_ip }}"
+        username: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        validate_certs: "{{ validate_certs }}"
+        display_name: "{{ item.display_name }}"
+        subnets: "{{ item.subnets }}"
+        state: "{{ state }}"
+      with_items:
+        - "{{ ip_pools }}"
+
+    - name: Edit Gateways (Routers)at Site A Redistribution
+      uri:
+        method: PATCH
+        url: "https://{{ nsx_node1.hostname }}/policy/api/v1/infra/"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body: "{{sitea_gateways}}"
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+        status_code: 200
+    
+    - name: Configure Bottom Firewall Marker Section
+      uri:
+        method: POST
+        url: https://{{ nsx_node1.hostname }}/api/v1/firewall/sections
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body:
+          display_name: tenant1-k8s_bottom_firewall_section
+          section_type : LAYER3
+          stateful : true
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+        status_code: 201
+
+    - name: Configure Top Firewall Marker Section
+      uri:
+        method: POST
+        url: https://{{ nsx_node1.hostname }}/api/v1/firewall/sections
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body:
+          display_name: tenant1-k8s_top_firewall_section
+          section_type : LAYER3
+          stateful : true
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+        status_code: 201
+
+    - name: "Create Overlay Logical Switch for K8s Node VIF"
+      nsxt_logical_switches:
+        hostname: "{{ nsx_node1.mgmt_ip }}"
+        username: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        validate_certs: "{{ validate_certs }}"
+        display_name: "{{ item.display_name }}"
+        replication_mode: SOURCE
+        admin_state: UP
+        transport_zone_name: "{{ item.transport_zone_name }}"
+        state: "{{ state }}"
+      with_items:
+        - "{{ logical_switches }}"
+
+    - name: Connect Kubernetes Nodes to the Overlay Logical Switch
+      command: sudo pwsh ./k8s-nodes-vif-attachment.ps1
+
+    - name: Collect Logical Ports information
+      uri:
+        method: GET
+        url: https://{{ nsx_node1.hostname }}/api/v1/logical-ports
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+      register: logical_ports
+
+    - name: Collect K8s Master logical port UUID
+      set_fact:
+        k8s_master_lp_id: "{{ logical_ports | to_json | from_json | json_query(query) }}"
+      vars:
+        query: "json.results[?starts_with(display_name, 'k8s-master')].id"
+
+    - name: Collect K8s Node1 logical port UUID
+      set_fact:
+        k8s_node1_lp_id: "{{ logical_ports | to_json | from_json | json_query(query) }}"
+      vars:
+        query: "json.results[?starts_with(display_name, 'k8s-node1')].id"
+
+    - name: Collect K8s Noder2 logical port UUID
+      set_fact:
+        k8s_node2_lp_id: "{{ logical_ports | to_json | from_json | json_query(query) }}"
+      vars:
+        query: "json.results[?starts_with(display_name, 'k8s-node2')].id"
+
+    - name: Collect k8s Master Logical Port information
+      uri:
+        method: GET
+        url: "https://{{ nsx_node1.hostname }}/api/v1/logical-ports/{{ k8s_master_lp_id[0] }}"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+      register: k8s_master_logical_port
+
+    - name: Configure K8s Master logical port TAGs
+      uri:
+        method: PUT
+        status_code: 200
+        url: "https://{{ nsx_node1.hostname }}/api/v1/logical-ports/{{ k8s_master_lp_id[0] }}"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body:
+          logical_switch_id:  "{{ k8s_master_logical_port.json.logical_switch_id }}"
+          attachment:
+            attachment_type: VIF
+            id: "{{ k8s_master_logical_port.json.attachment.id }}"
+          admin_state: UP
+          display_name: "{{ k8s_master_logical_port.json.display_name }}"
+          tags:
+          - scope: ncp/node_name
+            tag: k8s-master
+          - scope: ncp/cluster
+            tag: tenant1-k8s
+          _revision: "{{ k8s_master_logical_port.json._revision }} "
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+
+    - name: Collect k8s Node1 Logical Port information
+      uri:
+        method: GET
+        url: "https://{{ nsx_node1.hostname }}/api/v1/logical-ports/{{ k8s_node1_lp_id[0] }}"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+      register: k8s_node1_logical_port
+
+    - name: Configure k8s Node1 logical port TAGs
+      uri:
+        method: PUT
+        status_code: 200
+        url: "https://{{ nsx_node1.hostname }}/api/v1/logical-ports/{{ k8s_node1_lp_id[0] }}"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body:
+          logical_switch_id:  "{{ k8s_node1_logical_port.json.logical_switch_id }}"
+          attachment:
+            attachment_type: VIF
+            id: "{{ k8s_node1_logical_port.json.attachment.id }}"
+          admin_state: UP
+          display_name: "{{ k8s_node1_logical_port.json.display_name }}"
+          tags:
+          - scope: ncp/node_name
+            tag: k8s-node1
+          - scope: ncp/cluster
+            tag: tenant1-k8s
+          _revision: "{{ k8s_node1_logical_port.json._revision }} "
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+
+    - name: Collect k8s Node2 Logical Port information
+      uri:
+        method: GET
+        url: "https://{{ nsx_node1.hostname }}/api/v1/logical-ports/{{ k8s_node2_lp_id[0] }}"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+      register: k8s_node2_logical_port
+
+    - name: Configure k8s Node2 logical port TAGs
+      uri:
+        method: PUT
+        status_code: 200
+        url: "https://{{ nsx_node1.hostname }}/api/v1/logical-ports/{{ k8s_node2_lp_id[0] }}"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body:
+          logical_switch_id:  "{{ k8s_node2_logical_port.json.logical_switch_id }}"
+          attachment:
+            attachment_type: VIF
+            id: "{{ k8s_node2_logical_port.json.attachment.id }}"
+          admin_state: UP
+          display_name: "{{ k8s_node2_logical_port.json.display_name }}"
+          tags:
+          - scope: ncp/node_name
+            tag: k8s-node2
+          - scope: ncp/cluster
+            tag: tenant1-k8s
+          _revision: "{{ k8s_node2_logical_port.json._revision }} "
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+
