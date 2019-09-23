@@ -31,10 +31,21 @@
       with_items:
         - "{{ ip_pools }}"
 
-    - name: Edit Gateways (Routers)at Site A Redistribution
+    - name: Collect Site A Gateway locale services information
+      uri:
+        method: GET
+        url: https://{{ nsx_node1.hostname }}/policy/api/v1/infra/tier-0s/t0-sitea/locale-services
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+      register: t0_sitea_locale_services
+
+    - name: Edit Site A Gateway Redistribution
       uri:
         method: PATCH
-        url: "https://{{ nsx_node1.hostname }}/policy/api/v1/infra/"
+        url: "https://{{ nsx_node1.hostname }}/policy/api/v1/infra/tier-0s/t0-sitea/locale-services/{{ t0_sitea_locale_services.json.results[0].id }}"
         user: "{{ nsx_username }}"
         password: "{{ nsx_password }}"
         body: "{{sitea_gateways}}"
@@ -42,7 +53,7 @@
         force_basic_auth: yes
         validate_certs: no
         status_code: 200
-    
+
     - name: Configure Bottom Firewall Marker Section
       uri:
         method: POST
